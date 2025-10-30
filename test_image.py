@@ -14,16 +14,26 @@ def save_image(img, out_dir, name):
 def is_color_plate(img):
     w, h = img.size
     palette = [img.getpixel((i, 0)) for i in range(3)]
-    border_pixels = []
+    mask = palette[0]
+    border = palette[1]
+    filler = palette[2]
 
-    for x in range(w):
-        border_pixels.append(img.getpixel((x, 0)))
-        border_pixels.append(img.getpixel((x, h - 1)))
-    for y in range(h):
-        border_pixels.append(img.getpixel((0, y)))
-        border_pixels.append(img.getpixel((w - 1, y)))
+    is_color_plate = True
+    if mask == border:
+        is_color_plate = False
+    
+    if is_color_plate:
+        border_pixels = []
+        for x in range(w):
+            border_pixels.append(img.getpixel((x, 0)))
+            border_pixels.append(img.getpixel((x, h - 1)))
+        for y in range(h):
+            border_pixels.append(img.getpixel((0, y)))
+            border_pixels.append(img.getpixel((w - 1, y)))
 
-    return all(p in palette for p in border_pixels), palette
+        is_color_plate = all(p in palette for p in border_pixels)
+
+    return is_color_plate, palette
 
 def flood_fill(img, start, palette, visited):
     w, h = img.size
@@ -69,7 +79,7 @@ def group_islands_into_sequences(islands):
 
     return sequences
 
-def extract_colorplate_faces(img, palette, out_dir, is_debug=False):
+def extract_colorplate_faces(img, palette):
     w, h = img.size
     visited = [[False]*h for _ in range(w)]
     pixels = img.load()
@@ -93,18 +103,12 @@ def extract_colorplate_faces(img, palette, out_dir, is_debug=False):
         for face_idx, (x0, y0, x1, y1) in enumerate(seq):
             face = img.crop((x0, y0, x1, y1))
             faces.append(face)
-            if is_debug:
-                face_names = ["posz", "posx", "negz", "negx", "posy", "negy"]
-                save_image(face, out_dir, "sequence_%s_face_%s.png" % (seq_idx, face_names[face_idx]))
 
         face_sequences.append(faces)
 
-    if is_debug:
-        print(f"Extracted {len(sequences)} sequences with {sum(len(s) for s in sequences)} faces total")
-
     return face_sequences
 
-def extract_t_faces(img, out_dir, is_cubemap=True, is_debug=False):
+def extract_t_faces(img):
     w, h = img.size
     if w % 4 != 0 or h % 3 != 0:
         print("Not a valid 4x3 T-shape image (%sx%s)" % (w, h))
@@ -130,15 +134,8 @@ def extract_t_faces(img, out_dir, is_cubemap=True, is_debug=False):
         x0, y0 = cx * face_w, cy * face_h
         face = img.crop((x0, y0, x0 + face_w, y0 + face_h))
         faces.append(face)
-        if is_debug:
-            save_image(face, out_dir, "sequence_0_face_%s.png" % face_name)
 
-    if is_cubemap:
-        return faces
-    else:
-        if is_debug:
-            save_image(img, out_dir, "texture.png")
-        return None
+    return faces
 
 def direction_to_face_uv(rd):
     x, y, z = rd
@@ -169,7 +166,8 @@ def direction_to_face_uv(rd):
     v = (v + 1) / 2
     return face, u, v
 
-def cubemap_to_panorama(images, out_dir, sequence_idx, width=1024, height=512, is_debug=False):
+def cubemap_to_panorama(images, width=1024, height=512):
+    print("Turning images to a panorama")
     faces = []
     for image_idx, image in enumerate(images):
         if image_idx == 2 or image_idx == 3:
@@ -202,49 +200,71 @@ def cubemap_to_panorama(images, out_dir, sequence_idx, width=1024, height=512, i
             iy = min(int(fv * face_h), face_h - 1)
             pano[y, x] = faces[face][iy, ix]
 
-    if is_debug:
-        panorama_name = "panorama_%s.png" % sequence_idx
-        save_image(Image.fromarray(pano), out_dir,panorama_name )
-        print("Panorama saved to %s" % os.path.join(out_dir, panorama_name))
+    return Image.fromarray(pano)
 
-def extract_faces_auto(path, out_dir, is_cubemap=True, make_panorama=False, p_width=1024, p_height=512, is_debug=False):
-    img = Image.open(path).convert("RGBA")
+def get_texture_from_plate(texture, permutation_index=0, is_cubemap=True):
+    img = texture
     is_plate, palette = is_color_plate(img)
     if is_plate:
-        sequences = extract_colorplate_faces(img, palette, out_dir, is_debug=is_debug)
-        for sequence_idx, sequence in enumerate(sequences):
-            face_0 = sequence[1]
-            face_0 = face_0.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
-            face_0 = face_0.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
-            face_1 = sequence[3]
-            face_2 = sequence[4]
-            face_3 = sequence[5]
-            face_3 = face_3.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
-            face_3 = face_3.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
-            face_4 = sequence[0]
-            face_4 = face_4.transpose(Image.Transpose.ROTATE_90)
-            face_4 = face_4.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
-            face_4 = face_4.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
-            face_5 = sequence[2]
-            face_5 = face_5.transpose(Image.Transpose.ROTATE_90)
-            faces = [face_0, face_1, face_2, face_3, face_4, face_5]
+        sequences = extract_colorplate_faces(img, palette)
+        sequence_count = len(sequences)
+        if is_cubemap:
+            image_sets = []
+            for sequence_idx, sequence in enumerate(sequences):
+                face_0 = sequence[1]
+                face_0 = face_0.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
+                face_0 = face_0.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
+                face_1 = sequence[3]
+                face_2 = sequence[4]
+                face_3 = sequence[5]
+                face_3 = face_3.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
+                face_3 = face_3.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
+                face_4 = sequence[0]
+                face_4 = face_4.transpose(Image.Transpose.ROTATE_90)
+                face_4 = face_4.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
+                face_4 = face_4.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
+                face_5 = sequence[2]
+                face_5 = face_5.transpose(Image.Transpose.ROTATE_90)
+                faces = [face_0, face_1, face_2, face_3, face_4, face_5]
 
-            if make_panorama and sequence:
-                cubemap_to_panorama(faces, out_dir, sequence_idx, p_width, p_height, is_debug=is_debug)
+                if sequence:
+                    w, h = face_0.size
+                    pano_w = 4 * w
+                    pano_h = 2 * h
 
-    else:
-        faces = extract_t_faces(img, out_dir, is_cubemap=is_cubemap, is_debug=is_debug)
-        if make_panorama and faces:
-            sequence_idx = 0
-            cubemap_to_panorama(faces, out_dir, sequence_idx, p_width, p_height, is_debug=is_debug)
+                    img = cubemap_to_panorama(faces, pano_w, pano_h)
+                    image_sets.append([img])
+
+            if sequence_count > 0:
+                if sequence_count < permutation_index:
+                    img = image_sets[0][0]
+                else:
+                    img = image_sets[permutation_index][0]
+
+        else:
+            if sequence_count > 0:
+                if sequence_count < permutation_index:
+                    img = sequences[0][0]
+                else:
+                    img = sequences[permutation_index][0]
+
+    elif is_cubemap:
+        faces = extract_t_faces(img)
+        if faces:
+            w, h = img.size
+            pano_w = 4 * w
+            pano_h = 2 * h
+
+            img = cubemap_to_panorama(faces, pano_w, pano_h)
+
+    return img.convert('RGBA')
 
 if __name__ == "__main__":
-    image = r"C:\Users\Steven\Desktop\toolset_tests\cubemaps.tif"
-    out_dir = r"C:\Users\Steven\Desktop\toolset_tests\cubemap_faces"
+    input_image_path = r"C:\Users\Steven\Downloads\toolset_tests\cubemaps.tif"
+    ouput_image_path = r"C:\Users\Steven\Downloads\toolset_tests\cubemaps2.png"
+    permutation_index = 2
     is_cubemap = True
-    make_panorama = True
-    p_width=1024
-    p_height=512
-    is_debug = True
     
-    extract_faces_auto(image, out_dir, is_cubemap, make_panorama, p_width, p_height, is_debug)
+    input_image = Image.open(input_image_path)
+    output_image = get_texture_from_plate(input_image, permutation_index, is_cubemap)
+    output_image.save(ouput_image_path, format="PNG", optimize=True)
