@@ -21,7 +21,9 @@ def is_color_plate(img):
     is_color_plate = True
     if mask == border:
         is_color_plate = False
-    
+        if mask == (0, 0, 255, 255) and border == (0, 0, 255, 255) and filler == (0, 0, 255, 255):
+            is_color_plate = True
+
     if is_color_plate:
         border_pixels = []
         for x in range(w):
@@ -110,11 +112,11 @@ def extract_colorplate_faces(img, palette):
 
 def extract_t_faces(img):
     w, h = img.size
-    if w % 4 != 0 or h % 3 != 0:
-        print("Not a valid 4x3 T-shape image (%sx%s)" % (w, h))
-        return None
+    #if w % 4 != 0 or h % 3 != 0:
+        #print("Not a valid 4x3 T-shape image (%sx%s)" % (w, h))
+        #return None
 
-    face_w, face_h = w // 4, h // 3
+    face_w, face_h = w // 4, w // 4
     if face_w != face_h or not is_power_of_two(face_w):
         print("Face size must be square and power of two. got %sx%s" % (face_w, face_h))
         return None
@@ -260,9 +262,9 @@ def get_texture_from_plate(texture, permutation_index=0, is_cubemap=True):
     return img.convert('RGBA')
 
 if __name__ == "__main__":
-    input_image_path = r"C:\Users\Steven\Downloads\toolset_tests\cubemaps.tif"
-    ouput_image_path = r"C:\Users\Steven\Downloads\toolset_tests\cubemaps2.png"
-    permutation_index = 2
+    input_image_path = r"C:\Users\Steven\Documents\GitHub\Halo-Misc-Scripts\lockout_cubemap.tif"
+    ouput_image_path = r"C:\Users\Steven\Documents\GitHub\Halo-Misc-Scripts\lockout_cubemap.png"
+    permutation_index = 0
     is_cubemap = True
     
     input_image = Image.open(input_image_path)
